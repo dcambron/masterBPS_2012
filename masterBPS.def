@@ -1,0 +1,99 @@
+
+#ifndef _masterBPS_definitions_JF
+#define _masterBPS_definitions_JF
+                
+///////////////////////////////////////////////////
+//LED configuration
+//not sure where the LED is at the moment
+#define led1	LATCbits.LATC0	//1 for on 0 for off
+//#define led2	LATAbits.LATA5	//1 for on 0 for off
+#define LEDON	1
+#define LEDOFF	0
+//TRISC &= 0b11111110;//RC0 is the LED (set to output (0))
+
+////////////////////////////////////////////////////
+//current sensor stuff
+//assuming current sensor is on AN0
+//external voltage referencing (RA2 -> AN2 -> VREF-) (RA3 -> AN3 -> VREF+)
+#define VREF_PLUS	4.5
+#define VREF_MINUS	0
+
+////////////////////////////////////////////////////
+//relay configuration
+#define	precharge	LATCbits.LATC1
+#define	mainrelay	LATCbits.LATC2
+#define	arrayrelay	LATCbits.LATC3
+#define	RELAYON	0
+#define	RELAYOFF	1
+
+#define	PRECHARGETIME	600000
+#define MAINWAITTIME	100000
+
+//TRISC &= 0b11110001;//RC1,2,3 are the relay drive lines (set to output (0))
+
+
+////////////////////////////////////////////////////
+//Interrupt configuration
+
+//right now I am not planning on any interrupts but I wanted to make it easy to change that later
+//	If interrups are desired then change INTERRUPTENABLE to 1
+#define GLOBALINTERRUPTS	INTCONbits.GIE
+#define INTERRUPTENABLE	1
+#define INTERRUPTDISABLE	0
+
+
+
+////////////////////////////////////////////////////
+//CAN message configuration
+//CAN message identifiers are 11 bits long
+#define	MASK_BPS_SLAVE	0b00011111100
+#define	MASK_BPS_READING	0b00000000001
+#define	MASK_CBS	0b00000000010
+#define MASK_BPS_MASTER	0b00100000000
+#define MASK_BPS_SLAVE_READING	0b00011111101
+#define MASK_MASTER_SHUTDOWN	0b00100000011
+
+#define MPPT_CONTROLLER	0b01111111111
+
+#define SLAVE_BIT_OFFSET	2	//this is the number of bits right of where the slave address starts
+
+#define	BALANCEON	0xFF
+#define	BANANCEOFF	0x00
+
+
+////////////////////////////////////////////////////
+//BPS management Config options
+#define BPSSENDRATE	50
+#define	CHECKINTIMEOUT	200
+
+//battery voltage cutoff points (in Volts * 10000)
+//#define	CUTOFF_VOLTAGE_HIGH	39000
+//#define	CUTOFF_VOLTAGE_LOW	25000
+#define	CUTOFF_VOLTAGE_LOW	0
+#define	CUTOFF_VOLTAGE_HIGH	50000
+
+//battery current cutoff points (in milli-Amps)
+#define	CUTOFF_CURRENT_HIGH	40000
+#define	CUTOFF_CURRENT_LOW	-40000
+
+//battery temperature cutoff point (in Celcius)
+#define CUTOFF_TEMP_HIGH	47
+
+//array cutoff point (in Volts * 10000)
+#define ARRAY_CUTON		37700
+#define ARRAY_CUTOFF	38500
+
+//ERROR CONFIG OPTIONS
+#define	NOERR	0
+#define	BPSERR	1
+#define	CURRENTERR	2
+#define	SHUTDOWN	3
+
+//locations of the items in EEPROM remember 1 int = 2 char = 2 bytes
+#define LOCATION_ERRTYPE	0x00
+#define LOCATION_INTVAL0	0x01
+#define LOCATION_INTVAL1	0x02
+#define LOCATION_CHARVAL	0x03	
+
+
+#endif

@@ -10,6 +10,16 @@
 #define LEDON	1
 #define LEDOFF	0
 //TRISC &= 0b11111110;//RC0 is the LED (set to output (0))
+/////////////////////////////////////////////////////
+//DIP Switch Configuration
+#define switch1 PORTDbits.RD2
+#define switch2 PORTDbits.RD3
+#define switch3 PORTCbits.RC5
+#define switch4 PORTDbits.RD4
+#define switch5 PORTDbits.RD5
+#define switch6 PORTDbits.RD6
+#define SWITCHOFF 1
+#define SWITCHON 0
 
 ////////////////////////////////////////////////////
 //current sensor stuff
@@ -21,8 +31,8 @@
 ////////////////////////////////////////////////////
 //relay configuration
 #define	precharge	LATCbits.LATC1
-#define	mainrelay	LATCbits.LATC2
-#define	arrayrelay	LATCbits.LATC3
+#define	mainrelay	LATCbits.LATC3
+#define	arrayrelay	LATCbits.LATC2
 #define	RELAYON	0
 #define	RELAYOFF	1
 
@@ -48,7 +58,8 @@
 //CAN message identifiers are 11 bits long
 #define	MASK_BPS_SLAVE	0b00011111100
 #define	MASK_BPS_READING	0b00000000001
-#define	MASK_CBS	0b00000000010
+#define MASK_ENERGY         0b01000000000
+#define	MASK_CBS         	0b00000000010
 #define MASK_BPS_MASTER	0b00100000000
 #define MASK_BPS_SLAVE_READING	0b00011111101
 #define MASK_MASTER_SHUTDOWN	0b00100000011
@@ -58,19 +69,22 @@
 #define SLAVE_BIT_OFFSET	2	//this is the number of bits right of where the slave address starts
 
 #define	BALANCEON	0xFF
-#define	BANANCEOFF	0x00
+#define	BALANCEOFF	0x00
+#define MODULE_ID_NULL 255
 
 
 ////////////////////////////////////////////////////
 //BPS management Config options
 #define BPSSENDRATE	50
+#define	SLAVETIMEOUT	6
 #define	CHECKINTIMEOUT	200
+#define	RECEIVETIMEOUT	200
 
 //battery voltage cutoff points (in Volts * 10000)
-//#define	CUTOFF_VOLTAGE_HIGH	39000
-//#define	CUTOFF_VOLTAGE_LOW	25000
-#define	CUTOFF_VOLTAGE_LOW	0
-#define	CUTOFF_VOLTAGE_HIGH	50000
+#define	CUTOFF_VOLTAGE_HIGH	37000
+#define	CUTOFF_VOLTAGE_LOW	25000
+//#define	CUTOFF_VOLTAGE_LOW	0
+//#define	CUTOFF_VOLTAGE_HIGH	50000
 
 //battery current cutoff points (in milli-Amps)
 #define	CUTOFF_CURRENT_HIGH	40000

@@ -4,14 +4,18 @@
 #include "functions_ADC_JF.h"
 #include "functions_EEPROM_JF.h"
 #include <stdio.h>
+#include <p18f4580.h>
+#include <delays.h>
 
 #include "masterBPS_management.h"
 
+extern int glob_interrupt;
+extern long glob_current;
 
-/////////incomplete////////////
 //reads and returns the current
-int checkcurrent(int channelZeroInitial, int channelOneInitial)
+long checkcurrent()
 {
+	/*//code for original current sensor
 	int currentCH0 = 0, currentCH1 = 0, current = 0;
 	unsigned char interruptstatus;
 	/////////CURRENT///////////
@@ -46,118 +50,236 @@ int checkcurrent(int channelZeroInitial, int channelOneInitial)
 	else current = 0;//just a default case
 	
 	
-	return current;
+	return current;//*/
+
+/////////////////////////////////////////////////////////////////////////////////////
+	//*//The following code works for the HAIS 50 P hall effect current sensor.
+    //On current sensor: yellow wire is voltage reference of 2.5, and white wire is Vout
+	// Code written on the 2012 race by Jimmy Frilling
+	// Inserted into this master BPS code on 29-Apr-2013
+	//Edited by Daniel Cambron on 1-May-2013
+	//int currentCH0 = 0, currentCH1 = 0;
+	unsigned char interruptstatus;
+	int k = 0;
+	long result = 0;	//return the final answer
+	signed long int adcval = 0;	//need a long to store the value (long is 32 bits)
+	signed long int ref = 0;
+	long average = 0;
+	
+	//Calibration 1-May-2013 Daniel Cambron
+	//tests show that Vout-Vref = 0.00001253*current in mA 
+	//current in mA = (4.5/1024)*(average adc value)/.00001253 + 470
+	// or approximately 348.477*(average adc value) + 470
+	// instead of dividing to get the average adc value, we just run the loop 1024 times and find the sum, 
+    // and then multiply the number down to 348.48.    348.48 = 1024 * 0.3403095, 
+	//so run the loop 1024 times and multiply by 0.3403095 at the end 
+	interruptstatus = GLOBALINTERRUPTS;
+	GLOBALINTERRUPTS = INTERRUPTDISABLE;
+	for(k=0;k<1024;++k){
+		SetChanADC(ADC_CH1);	//channel has the voltage reference for the current sensor
+      	ConvertADC();			//tell the ADC to run once
+       	while(BusyADC());		//wait until the conversion is finished
+       	ref = ReadADC();	//store the value that was converted into result
+		SetChanADC(ADC_CH0);	//channel has the current sensor value
+      	ConvertADC();			//tell the ADC to run once
+       	while(BusyADC());		//wait until the conversion is finished
+       	adcval = ReadADC();	//store the value that was converted into result
+		average += adcval - ref;
+	}
+	GLOBALINTERRUPTS = interruptstatus;
+	result = average;
+	//a calibration offset of 470 mA, and a factor of 0.3403095197
+	result = ( (float)result * 0.3403) + 470;
+
+	if(result > CUTOFF_CURRENT_HIGH || result < CUTOFF_CURRENT_LOW){
+		failure(CURRENTERR, 0xFF, result, 0x00);
+	}
+	return result;	
 }
 
+//long updateEnergy(long energy
+
+
+
+
+
 //check for new CAN messages and if new messages are found then react accordingly
-void checkMessages(unsigned int* voltageArray, unsigned char* tempArray, unsigned char* bpsCheckinArray)
+void checkMessages()
 {
 	char messageReceived = 0;
 	unsigned char dataReceived[8];	//maximum length that can be recieved
 	unsigned char lengthReceived, flagsReceived;
 	unsigned long addressReceived;
-	
 	messageReceived = ECANReceiveMessage(&addressReceived, &dataReceived, &lengthReceived, &flagsReceived);
 	//while there are still messages in the buffer
 	while(messageReceived == 1)
 	{
 		//if I get here then I have recieved a message
-		//Now parse the identifier and decide what I need to do
-		//if it is a reading from one of the slaves
-		if ((addressReceived | MASK_BPS_SLAVE_READING)==MASK_BPS_SLAVE_READING)
-		{
-			unsigned char slaveAddr = 0;
-			unsigned int newVoltage = 0;
-			unsigned char newTemp = 0;
-
-			//check and ensure that three byte has been recieved
-			if(lengthReceived == 3)
-			{
-				
-				//first calculate the address of the slave
-				slaveAddr = (addressReceived & MASK_BPS_SLAVE) >> 2;
-				
-				//then retrieve and store the values for voltage and temperature
-				memcpy_reduced(&newVoltage, dataReceived);
-				newTemp = dataReceived[2];
-				
-				//store the new values into their arrays
-				voltageArray[(int)slaveAddr] = newVoltage;
-				tempArray[slaveAddr] = newTemp;
-				/*
-				printf("Message Recieved\r\nslaveaddr = %.2x\r\nvoltage = %u\r\ntemp = %u\r\n",
-					slaveAddr, newVoltage, newTemp);
-				printf("voltageArray[%d] = %u\r\n", slaveAddr, voltageArray[(int)slaveAddr]);//*/
-				//if it is under voltage over voltage or over temperature then shut the car off
-				if((newVoltage < CUTOFF_VOLTAGE_LOW) || 
-					(newVoltage > CUTOFF_VOLTAGE_HIGH) ||
-					(newTemp > CUTOFF_TEMP_HIGH))
-				{
-					failure(BPSERR, slaveAddr, newVoltage, newTemp);
-				}
-				
-				//set the corresponding checkin bit
-				//	slaveAddr/8 will select the correct char to place the bit in
-				//	|=	"or equals" will leave all of the other bits alone except the one
-				//	1 << (slaveAddr%8)	will put a 1 in the correct position of the char
-				bpsCheckinArray[slaveAddr/8] |= 1 << (slaveAddr%8);
-				//printf("bpsCheckinArray[%d] = 0x%x\r\n", slaveAddr/8, bpsCheckinArray[slaveAddr/8]);
-			}
-			//if it is a shutdown instruction
-			else if(addressReceived == SHUTDOWN)
-			{
-				failure(addressReceived, 0xFF, 0x00, 0x00);
-			}
-			
-		}
-		
+		//Now parse the identifier and decide what I need to do	
+		if(addressReceived == SHUTDOWN){
+			failure(addressReceived, 0xFF, 0x00, 0x00);
+		}		
 		//check for any more messages
 		messageReceived = ECANReceiveMessage(&addressReceived, &dataReceived, &lengthReceived, &flagsReceived);
-	}
+	}	
 	return;
 }
 
-/////////incomplete////////////
-void checkCBS(unsigned int *voltageArray, unsigned char *currentModule, unsigned char numModules)
+void readSlaves(unsigned int *voltageArray, unsigned char *tempArray, unsigned char numModules)
 {
-	return;
-}
-
-void checkinTest(unsigned char *bpsCheckinArray, unsigned char numModules)
-{
-	unsigned char i;
-	unsigned char comparebyte;
-	//scan through the array
-	//if a module has failed to check in then shut off the car
-	//	otherwise clear the bit and continue on through the array
+	int i = 0, j = 0;
+	char messageReceived = 0;
+	unsigned char dataReceived[8];	//maximum length that can be recieved
+	unsigned char lengthReceived, flagsReceived;
+	unsigned long addressReceived = 0;
+	unsigned long sendAddress;
+	unsigned int receiveTimeoutCounter = 0;
+	unsigned int slaveTimeoutCounter = 0;
+	unsigned int newVoltage = 0;
+	unsigned char newTemp = 0;
+	
 	for(i=0; i<numModules; ++i)
 	{
-		//if the bps has not checked in then report a failure
-		comparebyte = 1 << (i%8);
-		//yes, yes I know this is confusing
-		//so the checkinArray has 5 chars the (i/8) picks which char I want to check
-		//  anding (&) with comparebyte ensures that only a single "1" is left in the
-		//	byte that I am checking
-		//	bitshifting right (>>) by (i%8) pushes that one to the first bit position
-		//	by doing this I am left with either a 0 or a 1 indicating the value of this
-		//	specific bpscheckin bit
-		//printf("comparebyte = 0x%x\r\n", comparebyte);
-		//printf("i = %d\r\nbpsCheckinArray[%d] = 0x%x\r\n", i, i/8, bpsCheckinArray[i/8]);
-		if(((bpsCheckinArray[(i/8)]&comparebyte)>>(i%8)) ==0)
-			failure(BPSERR, i, 0x00, 0x00);
-		//NOTE: if the above doesn't work you could just check each char for any zeros,
-		//	but I wanted to be able to determine which BPS did not check in.
-	}
-	//if it makes it here then all was okay
-	//clear the array and exit
-	bpsCheckinArray[0] = 0;
-	bpsCheckinArray[1] = 0;
-	bpsCheckinArray[2] = 0;
-	bpsCheckinArray[3] = 0;
-	bpsCheckinArray[4] = 0;
+        unsigned int timeOutCounterJohn = 1000; //how long we wait for a message
+		slaveTimeoutCounter = 0;                //how many other messages we get before fail;
+		sendAddress = (i << 2) | MASK_BPS_READING;
+		//printf("i:%d\r\nadd:%lb\r\n", i, sendAddress);
+		while(addressReceived != sendAddress)
+		{
+			receiveTimeoutCounter = 0;
+			//ensure that the 0 transmit buffer is empty
+			/*
+			while((TXB0CON & 0b10000000) == 0)
+			{
+				for(j=0; j<100; ++j);
+				arrayrelay=~arrayrelay;
+				for(j=0; j<100; ++j);
+				arrayrelay=~arrayrelay;
+			}//*/
+			//send the message until it is acknowledged by something
+			timeOutCounterJohn = 1000;
+			while(!ECANSendMessage((MASK_BPS_MASTER | sendAddress), NULL, 0, ECAN_TX_STD_FRAME | ECAN_TX_PRIORITY_0 | ECAN_TX_NO_RTR_FRAME)  && timeOutCounterJohn) 
+			{
+				timeOutCounterJohn --;
+                for(j=0; j<50; ++j);
+				//led1=~led1;
+				for(j=0; j<50; ++j);
+				//led1=~led1;
+			}
+			
+			//check for a reply from the master acknowleging the message
+			while( (!ECANReceiveMessage(&addressReceived, &dataReceived, &lengthReceived, &flagsReceived)) && receiveTimeoutCounter<=RECEIVETIMEOUT  && timeOutCounterJohn) 
+			{
+                 timeOutCounterJohn--;
+            	//	++receiveTimeoutCounter;
+				for(j=0; j<100; ++j);
+				//led1=~led1;
+
+			//	printf("\tRXcnt: %u\r\n", receiveTimeoutCounter);//need this here for timing
+			}
+			//printf("RXadd:%lb\r\n", addressReceived);
+			
+			//*
+			++slaveTimeoutCounter;
+			if(slaveTimeoutCounter >= SLAVETIMEOUT)
+				{printf("Slave Timeout Error\r\n");failure(BPSERR, i, 0x00, 0x00);}//*/
+		}
+		//check and ensure that three byte has been recieved
+		if(lengthReceived == 3)
+		{
+			//retrieve and store the values for voltage and temperature
+			memcpy_reduced(&newVoltage, dataReceived);
+			newTemp = dataReceived[2];
+			
+			//store the new values into their arrays
+			voltageArray[i] = newVoltage;
+			tempArray[i] = newTemp;
+			//print out the values
+			GLOBALINTERRUPTS = INTERRUPTDISABLE;
+			printf("V[%.2d]=%u\n\r",i, newVoltage);
+			printf("T[%.2d]=%.2d\n\r",i, newTemp);
+			GLOBALINTERRUPTS = INTERRUPTENABLE;
+			//if it is under voltage over voltage or over temperature then shut the car off
+			if((newVoltage < CUTOFF_VOLTAGE_LOW) || 
+				(newVoltage > CUTOFF_VOLTAGE_HIGH) ||
+				(newTemp > CUTOFF_TEMP_HIGH))
+			{
+				failure(BPSERR, i, newVoltage, newTemp);
+			}
+		}
+		else {printf("Message Corruption Error\r\n");failure(BPSERR, i, 0x00, 0x00);}
 	
+		//if there was an interrupt, check the current now.
+		if(glob_interrupt && switch5 == SWITCHOFF) //switch5 disables current reading
+		{
+			glob_current=checkcurrent();
+			printf("BC=%ld\n\r",glob_current);
+			while(!ECANSendMessage((MASK_BPS_MASTER|MASK_BPS_READING), &glob_current, 4, ECAN_TX_STD_FRAME | ECAN_TX_PRIORITY_0 | ECAN_TX_NO_RTR_FRAME));
+			glob_interrupt = 0;
+		}
+	}
 	return;
 }
+
+void checkCBS(unsigned int *voltageArray, unsigned char *currentModule, unsigned char numModules)
+{
+//*
+	unsigned char action = BALANCEOFF;
+	unsigned char dataReceived[8];	//maximum length that can be recieved
+	unsigned char lengthReceived, flagsReceived;
+	unsigned long addressReceived = 0;
+	unsigned int my_CAN_id = ((unsigned int) *currentModule) << 2;
+	unsigned int lowestVoltage = 50000;
+	unsigned char lowestModule = *currentModule;
+	unsigned char i;
+	//determine the lowest module
+	for(i=0; i<numModules;++i)
+	{
+		if(voltageArray[i]<lowestVoltage)
+		{
+			lowestVoltage = voltageArray[i];
+			lowestModule = i;
+		}
+	}
+	//turn off CBS power to the previously low module if it's actually charging
+	//check to see if we have received a comfirm message from the slave
+	if(*currentModule != MODULE_ID_NULL)
+	{
+		while(addressReceived != (MASK_CBS | my_CAN_id))
+		{
+			//keep sending the message until something responds
+			while(!ECANSendMessage(MASK_BPS_MASTER | MASK_CBS | my_CAN_id, &action, 1, ECAN_TX_STD_FRAME | ECAN_TX_PRIORITY_0 | ECAN_TX_NO_RTR_FRAME));
+			//read message
+			while(!ECANReceiveMessage(&addressReceived, &dataReceived, &lengthReceived, &flagsReceived));
+		}
+	}
+	//turn on CBS power to the new low module if low module is low enough
+	if(lowestVoltage < (CUTOFF_VOLTAGE_HIGH - 3000))
+	{
+		my_CAN_id = ((unsigned int)lowestModule) << 2;
+		addressReceived = 0;
+		action = BALANCEON;
+		//check to see if we have received a comfirm message from the slave
+		while(addressReceived != (MASK_CBS | my_CAN_id))
+		{
+			//keep sending the message until something responds
+			while(!ECANSendMessage(MASK_BPS_MASTER | MASK_CBS | my_CAN_id, &action, 1, ECAN_TX_STD_FRAME | ECAN_TX_PRIORITY_0 | ECAN_TX_NO_RTR_FRAME));
+			//read message
+			while(!ECANReceiveMessage(&addressReceived, &dataReceived, &lengthReceived, &flagsReceived));
+		}
+		*currentModule = lowestModule;
+	}
+	else
+	{
+		*currentModule = MODULE_ID_NULL;
+	}
+	//print out the result
+	printf("CBS=%d\n\r",*currentModule);
+	while(!ECANSendMessage((MASK_BPS_MASTER|MASK_BPS_READING|MASK_CBS), currentModule, 1, ECAN_TX_STD_FRAME | ECAN_TX_PRIORITY_0 | ECAN_TX_NO_RTR_FRAME));	
+	//*/
+	return;
+}
+
 
 //ripoff of memcpy so that I don't have to include the string library
 void memcpy_reduced(void *output, void *input)
@@ -209,17 +331,43 @@ unsigned char checkArray(unsigned int *voltageArray, unsigned char numModules, u
 	return arrayActive;
 }
 
+long checkSOC(unsigned int *voltageArray,unsigned char numModules)
+{
+	unsigned int lowestVoltage = 50000;
+	unsigned char i;
+	unsigned long volts;
+	unsigned long charge;
+	//determine the lowest voltage
+	for(i=0; i<numModules;++i)
+	{
+		if(voltageArray[i]<lowestVoltage)
+		{
+			lowestVoltage = voltageArray[i];
+		}
+	}	
+ 	volts = (unsigned long)lowestVoltage;
+	//fit this voltage to a function corresponding to the State Of Charge	
+	charge = (volts*volts*5/100000-volts*2+20000);
+	charge = charge * 288; //multiply by the number of cells
+	return (long) charge; //this number should be in units of A*sec or coulombs. represents number of coulombs compared to total in fully charged pack
+}
 //if there was a bad reading then store the error and shut down the car.
 void failure(unsigned char type, unsigned char address, unsigned int intVal, unsigned char charVal)
 {
 	unsigned int i=0;
+	unsigned char action = BALANCEOFF;
 	unsigned char send_data[4];
 	memcpy_reduced(&(send_data[1]), &intVal);
 	send_data[0] = address;
 	send_data[3] = charVal;
 	//send the message that the car is going to shut down and why
-	ECANSendMessage(MASK_MASTER_SHUTDOWN, send_data, 4, ECAN_TX_STD_FRAME | ECAN_TX_PRIORITY_0 | ECAN_TX_NO_RTR_FRAME);
-	
+	while(!ECANSendMessage(MASK_MASTER_SHUTDOWN, send_data, 4, ECAN_TX_STD_FRAME | ECAN_TX_PRIORITY_0 | ECAN_TX_NO_RTR_FRAME));
+	//Try to shut the CBS relay off for the module that's out of range. this should not be a problem if the relay fails to shut off.
+	while(!ECANSendMessage(MASK_BPS_MASTER | MASK_CBS | ((unsigned int)(address << 2)), &action, 1, ECAN_TX_STD_FRAME | ECAN_TX_PRIORITY_0 | ECAN_TX_NO_RTR_FRAME));
+	printf("Shutting Car Down\n\r");
+	printf("Addr = %.2x\n\r",address);
+	printf("Volt = %u\n\r",intVal);
+	printf("temp = %.2d\n\r",charVal);
 	//store the error type (don't bother with type 0(not an error))
 	if(type==BPSERR)
 	{
@@ -247,16 +395,45 @@ void failure(unsigned char type, unsigned char address, unsigned int intVal, uns
 	mainrelay = RELAYOFF;
 	
 	//wait for car to shut down (yes it seems pointless until you run it on a power supply)
-	while(1);
-	
+	//different PWM's for the led to let us know what type of error
+	if(switch1 == SWITCHOFF) //switch1 casues data to continue being collected after the relay has been shut off
+	{
+		if(type==BPSERR){
+			while(1){
+				led1 = ~led1;
+				Delay10KTCYx(0);
+			}
+		}
+		else if(type == CURRENTERR){
+			while(1){
+				led1 = ~led1;
+				Delay10KTCYx(0);
+				led1 = ~led1;
+				Delay10KTCYx(0);
+				Delay10KTCYx(0);
+			}
+		}
+		else if(type == SHUTDOWN){
+			while(1){led1 = LEDOFF;}
+		}
+		else{
+			while(1){
+				led1 = ~led1;
+				for(i=0; i<20; ++i){Delay10KTCYx(0);}
+			}
+		}
+	}
 	return;
 }
 
-void sendData(int current)
+void sendData(long current,unsigned char currentModule, long energy)
 {
-	unsigned char send_data[2];
-	memcpy_reduced(send_data, &current);
-	
-	ECANSendMessage((MASK_BPS_MASTER|MASK_BPS_READING), send_data, 2, ECAN_TX_STD_FRAME | ECAN_TX_PRIORITY_0 | ECAN_TX_NO_RTR_FRAME);
+	printf("BC=%ld\n\r",current);
+	while(!ECANSendMessage((MASK_BPS_MASTER|MASK_BPS_READING), &current, 4, ECAN_TX_STD_FRAME | ECAN_TX_PRIORITY_0 | ECAN_TX_NO_RTR_FRAME));
+	while(!ECANSendMessage((MASK_BPS_MASTER|MASK_BPS_READING|MASK_CBS), &currentModule, 1, ECAN_TX_STD_FRAME | ECAN_TX_PRIORITY_0 | ECAN_TX_NO_RTR_FRAME));
+	while(!ECANSendMessage((MASK_BPS_MASTER|MASK_BPS_READING|MASK_ENERGY), &energy, 4, ECAN_TX_STD_FRAME | ECAN_TX_PRIORITY_0 | ECAN_TX_NO_RTR_FRAME));
+	printf("CBS=%d\n\r",currentModule);	
+	//printf("E=%ld\n\r",energy);
 	return;
 }
+

@@ -16,10 +16,35 @@ void CBS_Initialize(void)
 	//set whatever relay may be controlling the CBS supply to off
 	
 	//set the TRIS register for that relay to output
+
+	//DC 2-May-2013: nothing to do here bacause we're powering CBS relay off main relay driver
 	
 	
 	return;
 }
+
+
+void TIMER_Initialize(void)
+{
+	T0CONbits.TMR0ON = 0; // Stop the timer
+	T0CONbits.T08BIT = 0; // Run in 16-bit mode
+	T0CONbits.T0CS = 0; // Use system clock to increment timer
+	T0CONbits.PSA = 0; // A prescaler is assigned for Timer0
+	T0CONbits.T0PS2 = 1; // Use a 1:64 prescaler
+	T0CONbits.T0PS1 = 0;
+	T0CONbits.T0PS0 = 1;
+	
+	//INTCONbits.IPEN = 0; //priority disable
+	INTCONbits.GIEH = 1; // Global Interrupt Enable
+	INTCONbits.TMR0IE = 1; // Enable Timer0 interrupt (occurs on overflow)
+	INTCONbits.TMR0IF = 0; // Clear Timer0 interrupt flag
+
+	T0CONbits.TMR0ON = 1; // Start the timer
+
+	return;
+}
+
+
 
 //sets the LED's to off initially and sets the direction registers
 void LED_Initialize(void)
@@ -30,6 +55,11 @@ void LED_Initialize(void)
 	
 	//set the direction register
 	TRISC &= 0b11111110;//RC0 is the LED (set to output (0))
+	
+	//the following initializes the switches
+	CMCON |= 0b00000111; //disable the comparator
+	TRISD |= 0b01111100;
+	TRISC |= 0b00100000;
 }
 
 //opens the CAN port
@@ -102,7 +132,7 @@ void CheckForPreviousError(void)
 			send_data[2] = readByte(LOCATION_INTVAL1);
 			send_data[3] = readByte(LOCATION_CHARVAL);
 			
-			ECANSendMessage(MASK_MASTER_SHUTDOWN, send_data, 4, ECAN_TX_STD_FRAME | ECAN_TX_PRIORITY_0 | ECAN_TX_NO_RTR_FRAME);
+			while(!ECANSendMessage(MASK_MASTER_SHUTDOWN, send_data, 4, ECAN_TX_STD_FRAME | ECAN_TX_PRIORITY_0 | ECAN_TX_NO_RTR_FRAME));
 		}
 		else if(errorType == CURRENTERR)
 		{
@@ -111,7 +141,7 @@ void CheckForPreviousError(void)
 			send_data[2] = readByte(LOCATION_INTVAL1);
 			send_data[3] = 0x00;
 			
-			ECANSendMessage(MASK_MASTER_SHUTDOWN, send_data, 4, ECAN_TX_STD_FRAME | ECAN_TX_PRIORITY_0 | ECAN_TX_NO_RTR_FRAME);
+			while(!ECANSendMessage(MASK_MASTER_SHUTDOWN, send_data, 4, ECAN_TX_STD_FRAME | ECAN_TX_PRIORITY_0 | ECAN_TX_NO_RTR_FRAME));
 		}
 		else //if(errorType == SHUTDOWN)	//just going to let it default here
 		{
@@ -120,7 +150,7 @@ void CheckForPreviousError(void)
 			send_data[2] = 0x00;
 			send_data[3] = 0xFF;
 			
-			ECANSendMessage(MASK_MASTER_SHUTDOWN, send_data, 4, ECAN_TX_STD_FRAME | ECAN_TX_PRIORITY_0 | ECAN_TX_NO_RTR_FRAME);
+			while(!ECANSendMessage(MASK_MASTER_SHUTDOWN, send_data, 4, ECAN_TX_STD_FRAME | ECAN_TX_PRIORITY_0 | ECAN_TX_NO_RTR_FRAME));
 		}
 		//since we have reported the error go ahead and clear the error bits
 		//just so we can request the last error data I will leave all of the data
@@ -132,55 +162,6 @@ void CheckForPreviousError(void)
 	//otherwise there was no previous error just continue on
 	
 	return;
-}
-
-//returns whether or not the values are in range
-unsigned char BPS_Initialize(unsigned char numModules, unsigned char *bpsCheckinArray, unsigned int *voltageArray, unsigned char *tempArray, int current)
-{
-	unsigned char i = 0;
-	unsigned char checkVoltageArray = 0;
-	unsigned char checkCurrent = 0;
-	unsigned char comparebyte = 0;
-	//keep checking for messages until all modules have reported
-	while(checkVoltageArray == 0)
-	{
-		checkVoltageArray = 1;	//reset to 1 if a bps does not check in then it will be cleared
-		//led1 =1;
-		checkMessages(voltageArray, tempArray, bpsCheckinArray);
-		//led1 = 0;
-		for(i=0; i<numModules; ++i)
-		{
-			led1 = ~led1;
-			//if the bps has not checked in
-			comparebyte = 1 << (i%8);
-			//yes, yes I know this is confusing
-			//so the checkinArray has 5 chars the (i/8) picks which char I want to check
-			//  anding (&) with comparebyte ensures that only a single "1" is left in the
-			//	byte that I am checking
-			//	bitshifting right (>>) by (i%8) pushes that one to the first bit position
-			//	by doing this I am left with either a 0 or a 1 indicating the value of this
-			//	specific bpscheckin bit
-			if(((bpsCheckinArray[(i/8)]&comparebyte)>>(i%8)) ==0)
-				checkVoltageArray = 0;
-			//NOTE: if the above doesn't work you could just check each char for any zeros,
-			//	but I wanted to be able to determine which BPS did not check in.
-		}
-		//send the numbers for the modules that have reported out on the CAN bus
-		//	for telemetry and LCD to monitor
-		// ^ I am not going to do that at the moment since the LCD and Telemetry 
-		//		will be able to monitor the can bus for themselves
-	}
-	//once that loop exits we will know that all of the slaves have reported and 
-	//	that all of them are in bounds
-	
-	//check the current value that was passed in
-	if((current < CUTOFF_CURRENT_LOW) || (current > CUTOFF_CURRENT_HIGH))
-		checkCurrent = 0;
-	else
-		checkCurrent = 1;
-	
-	//after all BPS boards have reported in check the current and return whether or not everything is good
-	return (checkCurrent && checkVoltageArray);
 }
 
 //use this function to run the relays in the startup sequence

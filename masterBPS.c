@@ -3,43 +3,62 @@
 #pragma config WDT = OFF    // WatchDog Timer
 #pragma config LVP = OFF    // Low Voltage Programming OFF
 
-#define moduleCount 33
+#define moduleCount 32	//actual number of modules to be checked
 
-#include <p18f4480.h>
+#include <p18f4580.h>
 #include <stdio.h>
 #include "functions_Serial_JF.h"
 #include "masterBPS.def"
 #include "masterBPS_management.h"
 #include "masterBPS_initialize.h"
+#include "isr.h"
 
+long glob_energy = 0; //not used at the moment
+long glob_current = 0; //current leaving the battery pack
+int glob_interrupt = 0; //flag whenever an interrupt happens
+int glob_CBSDelay = 0; //interrupt times the calling of the CBS function
+unsigned char glob_currentModule = MODULE_ID_NULL; //module that the CBS is charging
+
+////////INTERRUPT SERVICE ROUTINE///////////////////////////////
+// start ISR code
+#pragma code isr = 0x08 // store the below code at address 0x08
+  // let the compiler know that the function isr() is an interrupt handler
+
+void isr(void) //this function runs every 1/(((clock freq / 4) / prescaler) / (2^16)) seconds
+{
+    if(INTCONbits.TMR0IF) // if the interrupt flag has been set
+    {
+		glob_interrupt = 1;
+		glob_CBSDelay++;
+		INTCONbits.TMR0IF = 0;
+    }    
+	return;
+}
+#pragma interrupt isr 
+#pragma code // return to the default code section
+/////////////////////////////////////////// end ISR code////
 
 void main (void)
 {
 	unsigned long int i;
-	int current = 0,channelZeroInitial = 0, channelOneInitial = 0;
-	unsigned long int checkinCounter = 0;
+	int channelZeroInitial= 0, channelOneInitial=0;	
+	unsigned long int CBSDelay = 0; //CBS updates every so often
 	unsigned char arrayActive = 1;
 	unsigned int voltage[moduleCount];
 	unsigned char temperature[moduleCount];
-	unsigned char bpsCheckin[5];
-	
-	
-	unsigned char start = 0;
-	
-	
 	//set all of the used pins to input 
 	//	(so that we don't output anything wrong until everything is initialized)
 	//best option is to set the unconnected pins to output and set to 0;
 	//the list of unused pins:
 	//RA 1,4,5,6,7 (0,2,3 are the adc pins used for current sensor)
 	//RB 0,1,4,5,6,7 (2,3 are the CAN pins)
-	//RC 4,5,6,7 (0 is the LED, 1,2,3 are the relay controls)
-	//RD 1,2,3,4,5 (6 and 7 are the uart port lines)
+	//RC 4,6,7 (0 is the LED, 1,2,3 are the relay controls) 5 is switch3
+	//RD 1, (6 and 7 are the uart port lines) 2,3,4,5 are switches
 	//RE 0,1,2 (all of the other bits in TRISE are config bits not for actual ports)
 	TRISA = 0b00000000;
 	TRISB = 0b00000000;
-	TRISC = 0b00001111;
-	TRISD = 0b00000000;
+	TRISC = 0b00101111;
+	TRISD = 0b01111100;
 	TRISE = 0b00000000;
 	LATB = 0x00;
 	LATC = 0x00;
@@ -50,11 +69,9 @@ void main (void)
 	//ensure the relays are in the correct states
 	RELAY_Initialize();
 	//open the serial port
-	//openSerialPort();
+	openSerialPort();
 	//initialize the CAN system
 	CAN_Initialize();
-	//ensure the CBS system is off
-	//CBS_Initialize();
 	//setup the LED(s)
 	LED_Initialize();
 	//check to determine the last state of the BPS
@@ -62,38 +79,26 @@ void main (void)
 	//setup the Analog to Digital converter
 	ADC_Initialize(&channelZeroInitial, &channelOneInitial);
 	//Check to see if all values are in range
-	current = checkcurrent(channelZeroInitial, channelOneInitial);
-	start = BPS_Initialize(moduleCount, bpsCheckin, voltage, temperature, current);
-	//if everything is okay then start the car and continue running otherwise don't start the car
-	if(start == 1)
-		successful_Start();
-	else
-	{
-		led1=LEDON;
-		while(1);
-	}
+	if(switch5 == SWITCHOFF) glob_current = checkcurrent();
+	readSlaves(voltage, temperature, moduleCount);
+	//set up the timer which interrupts at a known frequency. (Used for Energy Calculation)
+	TIMER_Initialize();
+	//if we get here then all of the modules checked out alright and it is okay to start the car
+	successful_Start();
 
 	while(1)
 	{
-		//led1 = ~led1;//leaving off for real use to save power
-		checkMessages(voltage, temperature, bpsCheckin);
-		current = checkcurrent(channelZeroInitial, channelOneInitial);
-		sendData(current);
-		//printf("%u\r\n%u\r\n",voltage[0], voltage[1]);
-		//arrayActive= checkArray(voltage, moduleCount, arrayActive);
-		//checkCBS();
-		//printf("checkin[0]=0x%x\r\n", bpsCheckin[0]);
-		if(checkinCounter >= CHECKINTIMEOUT)
-		{
-			led1=~led1;
-			checkinTest(bpsCheckin, moduleCount);
-			checkinCounter = 0;
+		readSlaves(voltage, temperature, moduleCount);
+		arrayActive = checkArray(voltage, moduleCount, arrayActive);
+		if(glob_CBSDelay > 60){
+			checkCBS(voltage,&glob_currentModule, moduleCount);
+			glob_CBSDelay = 0;
 		}
-		checkinCounter++;
-		//we are going to need a delay in here I think
-		//don't yet know how long I want the delay to be
+		led1 = LEDOFF;
+		if(switch1 == SWITCHON || switch2 == SWITCHON || switch5 == SWITCHON) led1 = LEDON;
+		//sw1 cause program to keep runing after failure
+		//sw5 disables current reading 
 		for(i=0; i<400; ++i); //max for unsigned long is 4,294,967,295
 	}
-
 	return; //should never get here
 }

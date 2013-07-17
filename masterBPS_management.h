@@ -3,13 +3,13 @@
 #define _masterBPS_management_JF
 
 
-void checkMessages(unsigned int *voltageArray, unsigned char *tempArray, unsigned char *bpsCheckinArray);
+void checkMessages();
 void checkCBS(unsigned int *voltageArray, unsigned char *currentModule, unsigned char numModules);
-void checkinTest(unsigned char *bpsCheckinArray, unsigned char numModules);
 unsigned char checkArray(unsigned int *voltageArray, unsigned char numModules, unsigned char arrayActive);
-void sendData(int current);
-
-int checkcurrent(int channelZeroInitial, int channelOneInitial);
+void sendData(long current, unsigned char currentModule,long energy);
+void readSlaves(unsigned int *voltageArray, unsigned char *tempArray, unsigned char numModules);
+long checkSOC(unsigned int *voltageArray,unsigned char numModules);
+long checkcurrent();
 
 
 void memcpy_reduced(void *output, void *input);
